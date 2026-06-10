@@ -564,12 +564,15 @@ def draw_overlay(frame, metrics, fps):
 def ensure_outputs(config: RuntimeConfig):
     anomaly_dir = config.output_dir / "anomaly_frames"
     report_dir = config.output_dir / "anomaly_reports"
+    html_report_dir = report_dir / "html"
+    json_report_dir = report_dir / "json"
     video_dir = config.output_dir / "videos"
     log_path = config.output_dir / "anomaly_log_v2.csv"
     evidence_log_path = config.output_dir / "anomaly_evidence_log.csv"
     config.output_dir.mkdir(parents=True, exist_ok=True)
     anomaly_dir.mkdir(parents=True, exist_ok=True)
-    report_dir.mkdir(parents=True, exist_ok=True)
+    html_report_dir.mkdir(parents=True, exist_ok=True)
+    json_report_dir.mkdir(parents=True, exist_ok=True)
     video_dir.mkdir(parents=True, exist_ok=True)
 
     if not log_path.exists():
@@ -624,7 +627,7 @@ def ensure_outputs(config: RuntimeConfig):
                     "included_anomaly_examples",
                 ]
             )
-    return anomaly_dir, report_dir, video_dir, log_path, evidence_log_path
+    return anomaly_dir, html_report_dir, json_report_dir, video_dir, log_path, evidence_log_path
 
 
 def append_log(log_path: Path, metrics: dict[str, Any], image_path: Path):
@@ -739,8 +742,8 @@ def append_evidence_log(evidence_log_path: Path, record: dict[str, Any]):
         )
 
 
-def write_explanation_json(report_dir: Path, record: dict[str, Any]):
-    out_path = report_dir / f"{Path(record['image_file']).stem}.json"
+def write_explanation_json(json_report_dir: Path, record: dict[str, Any]):
+    out_path = json_report_dir / f"{Path(record['image_file']).stem}.json"
     out_path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     return out_path
 
@@ -972,11 +975,11 @@ def calibrate_normal(config: RuntimeConfig, frames: int = 300, percentile_value:
 
 def run(config: RuntimeConfig):
     apply_calibration(config)
-    anomaly_dir, report_dir, video_dir, log_path, evidence_log_path = ensure_outputs(config)
+    anomaly_dir, html_report_dir, json_report_dir, video_dir, log_path, evidence_log_path = ensure_outputs(config)
     metadata_path = write_metadata(config)
-    report_path = report_dir / f"anomaly_report_{timestamp()}.html"
+    report_path = html_report_dir / f"anomaly_report_{timestamp()}.html"
     report_records: list[dict[str, Any]] = []
-    write_html_report(report_path, report_dir, report_records)
+    write_html_report(report_path, html_report_dir, report_records)
 
     cap = cv2.VideoCapture(config.source)
     if not cap.isOpened():
@@ -1040,9 +1043,9 @@ def run(config: RuntimeConfig):
                     append_log(log_path, metrics, image_path)
                     evidence_record = build_evidence_record(config, detector, metrics, image_path)
                     append_evidence_log(evidence_log_path, evidence_record)
-                    write_explanation_json(report_dir, evidence_record)
+                    write_explanation_json(json_report_dir, evidence_record)
                     report_records.append(evidence_record)
-                    write_html_report(report_path, report_dir, report_records)
+                    write_html_report(report_path, html_report_dir, report_records)
                     saved_photo_counter += 1
 
             if writer is not None:

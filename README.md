@@ -44,7 +44,8 @@ python3 hybrid_realtime_anomaly_app.py --source data/cctv.mp4 --sensitivity high
 Hasil runtime otomatis disimpan secara lokal dan tidak ikut masuk GitHub:
 
 - `hybrid_outputs/anomaly_frames/`
-- `hybrid_outputs/anomaly_reports/`
+- `hybrid_outputs/anomaly_reports/html/`
+- `hybrid_outputs/anomaly_reports/json/`
 - `hybrid_outputs/anomaly_log_v2.csv`
 - `hybrid_outputs/anomaly_evidence_log.csv`
 - `hybrid_outputs/videos/`
@@ -52,7 +53,7 @@ Hasil runtime otomatis disimpan secara lokal dan tidak ikut masuk GitHub:
 
 `anomaly_evidence_log.csv` adalah log detail untuk laporan. Isinya mencakup nama/path foto anomali, link foto, alasan deteksi, score gabungan, threshold, motion score, optical-flow score, autoencoder score jika model tersedia, jumlah track manusia, dan contoh kategori anomali seperti pencurian, vandalism, serta abusive/violence.
 
-Selain CSV, program utama juga otomatis membuat laporan HTML di `hybrid_outputs/anomaly_reports/`. Laporan ini berisi kartu per foto anomali: gambar, alasan, dan bukti pendukung dari skor deteksi.
+Selain CSV, program utama juga otomatis membuat laporan HTML di `hybrid_outputs/anomaly_reports/html/`. Laporan ini berisi kartu per foto anomali: gambar, alasan, dan bukti pendukung dari skor deteksi. File JSON detail per foto disimpan terpisah di `hybrid_outputs/anomaly_reports/json/`.
 
 Jika ingin membuat ulang laporan HTML dari CSV yang sudah ada:
 

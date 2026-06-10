@@ -18,7 +18,7 @@ from pathlib import Path
 WORKSPACE = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = WORKSPACE / "hybrid_outputs"
 DEFAULT_CSV_PATH = DEFAULT_OUTPUT_DIR / "anomaly_evidence_log.csv"
-DEFAULT_REPORT_DIR = DEFAULT_OUTPUT_DIR / "anomaly_reports"
+DEFAULT_REPORT_DIR = DEFAULT_OUTPUT_DIR / "anomaly_reports" / "html"
 
 
 def read_records(csv_path: Path):
