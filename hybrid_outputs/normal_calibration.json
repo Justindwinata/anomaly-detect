@@ -1,0 +1,23 @@
+{
+  "created_at": "2026-06-11T00:36:10",
+  "source": "data/steal.mp4",
+  "normal_frames_used": 255,
+  "percentile": 99.5,
+  "safety_scale": 1.25,
+  "model_threshold": 0.230378657579422,
+  "motion_area_threshold": 0.01,
+  "flow_threshold": 0.35,
+  "combined_threshold": 1.4082327485084534,
+  "warmup_frames": 45,
+  "normal_stats": {
+    "ae_error_mean": 0.18417031548771204,
+    "ae_error_p99": 0.18430210649967194,
+    "motion_area_mean": 0.0015040168845315903,
+    "motion_area_p99": 0.0038434031885117292,
+    "flow_mean": 0.008246295998676443,
+    "flow_p99": 0.052002519369125366,
+    "combined_mean": 1.1104685450872827,
+    "combined_p99": 1.126396894454956
+  },
+  "notes": "Gunakan file ini dengan --calibration-file agar webcam diam tidak sering dianggap anomali."
+}

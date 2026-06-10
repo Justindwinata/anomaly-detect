@@ -1,0 +1,9 @@
+{
+  "description": "Contoh zona alert untuk frame 640x360. Ubah titik points sesuai area penting di CCTV.",
+  "points": [
+    [160, 90],
+    [500, 90],
+    [560, 330],
+    [120, 330]
+  ]
+}

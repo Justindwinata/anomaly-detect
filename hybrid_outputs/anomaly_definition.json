@@ -1,0 +1,27 @@
+{
+  "created_at": "2026-06-11T02:50:25",
+  "output_labels": [
+    "NORMAL",
+    "ANOMALY"
+  ],
+  "anomaly_category": {
+    "label": "ANOMALY",
+    "included_events": [
+      "vandalism / perusakan fasilitas",
+      "abusive or violent behavior / perkelahian",
+      "theft / pencurian",
+      "restricted-area entry / masuk area terlarang",
+      "abandoned or unusual object / benda tertinggal atau asing",
+      "sudden abnormal movement / gerakan tidak wajar"
+    ]
+  },
+  "model_path": "/Users/justindwinata/Documents/CCTV ANOMALY DETECT/cctv-video-anomaly-detection-main/outputs/trained_model.pth",
+  "methodology": [
+    "autoencoder reconstruction error",
+    "motion area and optical flow",
+    "human detection and centroid tracking",
+    "alert-zone duration rule",
+    "persistent anomaly streak filter"
+  ],
+  "notes": "Vandalism, abusive/violence, and theft are treated as one general ANOMALY category."
+}
