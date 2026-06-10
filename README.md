@@ -5,6 +5,7 @@ Program deteksi anomali CCTV untuk tugas Computer Vision. Output utama adalah la
 ## Isi Utama
 
 - `hybrid_realtime_anomaly_app.py` - aplikasi utama untuk webcam, video CCTV, atau RTSP.
+- `generate_anomaly_report.py` - membuat laporan HTML berisi foto anomali dan penjelasannya.
 - `Hybrid_CCTV_Anomaly_Detection_App.ipynb` - notebook ringkas untuk menjalankan aplikasi hybrid.
 - `CCTV_Anomaly_Detection_Realtime.ipynb` - notebook eksperimen awal/end-to-end.
 - `zones/alert_zone_example.json` - contoh polygon zona pengawasan.
@@ -43,12 +44,21 @@ python3 hybrid_realtime_anomaly_app.py --source data/cctv.mp4 --sensitivity high
 Hasil runtime otomatis disimpan secara lokal dan tidak ikut masuk GitHub:
 
 - `hybrid_outputs/anomaly_frames/`
+- `hybrid_outputs/anomaly_reports/`
 - `hybrid_outputs/anomaly_log_v2.csv`
 - `hybrid_outputs/anomaly_evidence_log.csv`
 - `hybrid_outputs/videos/`
 - `outputs/`
 
 `anomaly_evidence_log.csv` adalah log detail untuk laporan. Isinya mencakup nama/path foto anomali, link foto, alasan deteksi, score gabungan, threshold, motion score, optical-flow score, autoencoder score jika model tersedia, jumlah track manusia, dan contoh kategori anomali seperti pencurian, vandalism, serta abusive/violence.
+
+Selain CSV, program utama juga otomatis membuat laporan HTML di `hybrid_outputs/anomaly_reports/`. Laporan ini berisi kartu per foto anomali: gambar, alasan, dan bukti pendukung dari skor deteksi.
+
+Jika ingin membuat ulang laporan HTML dari CSV yang sudah ada:
+
+```bash
+python3 generate_anomaly_report.py
+```
 
 ## Catatan Model
 

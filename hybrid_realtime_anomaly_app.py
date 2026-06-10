@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -561,11 +563,13 @@ def draw_overlay(frame, metrics, fps):
 
 def ensure_outputs(config: RuntimeConfig):
     anomaly_dir = config.output_dir / "anomaly_frames"
+    report_dir = config.output_dir / "anomaly_reports"
     video_dir = config.output_dir / "videos"
     log_path = config.output_dir / "anomaly_log_v2.csv"
     evidence_log_path = config.output_dir / "anomaly_evidence_log.csv"
     config.output_dir.mkdir(parents=True, exist_ok=True)
     anomaly_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
     video_dir.mkdir(parents=True, exist_ok=True)
 
     if not log_path.exists():
@@ -620,7 +624,7 @@ def ensure_outputs(config: RuntimeConfig):
                     "included_anomaly_examples",
                 ]
             )
-    return anomaly_dir, video_dir, log_path, evidence_log_path
+    return anomaly_dir, report_dir, video_dir, log_path, evidence_log_path
 
 
 def append_log(log_path: Path, metrics: dict[str, Any], image_path: Path):
@@ -668,48 +672,147 @@ def build_evidence_summary(config: RuntimeConfig, metrics: dict[str, Any], detec
     return "; ".join(evidence)
 
 
-def append_evidence_log(
-    evidence_log_path: Path,
-    config: RuntimeConfig,
-    detector: HybridAnomalyDetector,
-    metrics: dict[str, Any],
-    image_path: Path,
-):
+def build_evidence_record(config: RuntimeConfig, detector: HybridAnomalyDetector, metrics: dict[str, Any], image_path: Path):
     image_path = image_path.resolve()
-    hyperlink = f'=HYPERLINK("{image_path}", "lihat foto")'
-    zone_track_ids = "|".join(str(track["id"]) for track in metrics.get("zone_tracks", []))
+    return {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "frame_index": metrics["frame_index"],
+        "label": "ANOMALY",
+        "image_file": image_path.name,
+        "image_path": str(image_path),
+        "image_hyperlink": f'=HYPERLINK("{image_path}", "lihat foto")',
+        "reason": metrics.get("reason", ""),
+        "evidence_summary": build_evidence_summary(config, metrics, detector),
+        "combined_score": f"{metrics['combined_score']:.6f}",
+        "combined_threshold": f"{config.combined_threshold:.6f}",
+        "raw_anomaly_streak": metrics["raw_anomaly_streak"],
+        "min_anomaly_frames": config.min_anomaly_frames,
+        "motion_area_ratio": f"{metrics['motion_area_ratio']:.6f}",
+        "motion_area_threshold": f"{config.motion_area_threshold:.6f}",
+        "motion_score": f"{metrics['motion_score']:.6f}",
+        "flow_mean": f"{metrics['flow_mean']:.6f}",
+        "flow_threshold": f"{config.flow_threshold:.6f}",
+        "flow_score": f"{metrics['flow_score']:.6f}",
+        "reconstruction_error": "" if metrics["reconstruction_error"] is None else f"{metrics['reconstruction_error']:.8f}",
+        "model_threshold": "" if detector.model_threshold is None else f"{detector.model_threshold:.8f}",
+        "autoencoder_score": f"{metrics['autoencoder_score']:.6f}",
+        "human_count": len(metrics.get("tracks", [])),
+        "zone_track_ids": "|".join(str(track["id"]) for track in metrics.get("zone_tracks", [])),
+        "zone_loiter_frames": config.zone_loiter_frames,
+        "detected_motion_boxes": len(metrics.get("boxes", [])),
+        "included_anomaly_examples": " | ".join(ANOMALY_CATEGORY["included_events"]),
+    }
+
+
+def append_evidence_log(evidence_log_path: Path, record: dict[str, Any]):
     with evidence_log_path.open("a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
             [
-                datetime.now().isoformat(timespec="seconds"),
-                metrics["frame_index"],
-                "ANOMALY",
-                image_path.name,
-                str(image_path),
-                hyperlink,
-                metrics.get("reason", ""),
-                build_evidence_summary(config, metrics, detector),
-                f"{metrics['combined_score']:.6f}",
-                f"{config.combined_threshold:.6f}",
-                metrics["raw_anomaly_streak"],
-                config.min_anomaly_frames,
-                f"{metrics['motion_area_ratio']:.6f}",
-                f"{config.motion_area_threshold:.6f}",
-                f"{metrics['motion_score']:.6f}",
-                f"{metrics['flow_mean']:.6f}",
-                f"{config.flow_threshold:.6f}",
-                f"{metrics['flow_score']:.6f}",
-                "" if metrics["reconstruction_error"] is None else f"{metrics['reconstruction_error']:.8f}",
-                "" if detector.model_threshold is None else f"{detector.model_threshold:.8f}",
-                f"{metrics['autoencoder_score']:.6f}",
-                len(metrics.get("tracks", [])),
-                zone_track_ids,
-                config.zone_loiter_frames,
-                len(metrics.get("boxes", [])),
-                " | ".join(ANOMALY_CATEGORY["included_events"]),
+                record["timestamp"],
+                record["frame_index"],
+                record["label"],
+                record["image_file"],
+                record["image_path"],
+                record["image_hyperlink"],
+                record["reason"],
+                record["evidence_summary"],
+                record["combined_score"],
+                record["combined_threshold"],
+                record["raw_anomaly_streak"],
+                record["min_anomaly_frames"],
+                record["motion_area_ratio"],
+                record["motion_area_threshold"],
+                record["motion_score"],
+                record["flow_mean"],
+                record["flow_threshold"],
+                record["flow_score"],
+                record["reconstruction_error"],
+                record["model_threshold"],
+                record["autoencoder_score"],
+                record["human_count"],
+                record["zone_track_ids"],
+                record["zone_loiter_frames"],
+                record["detected_motion_boxes"],
+                record["included_anomaly_examples"],
             ]
         )
+
+
+def write_explanation_json(report_dir: Path, record: dict[str, Any]):
+    out_path = report_dir / f"{Path(record['image_file']).stem}.json"
+    out_path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+    return out_path
+
+
+def write_html_report(report_path: Path, report_dir: Path, records: list[dict[str, Any]]):
+    cards = []
+    for record in records:
+        image_src = os.path.relpath(record["image_path"], start=report_dir)
+        details = [
+            ("Combined score", f"{record['combined_score']} / threshold {record['combined_threshold']}"),
+            ("Motion", f"area {record['motion_area_ratio']}, score {record['motion_score']}"),
+            ("Optical flow", f"mean {record['flow_mean']}, score {record['flow_score']}"),
+            ("Autoencoder", record["reconstruction_error"] or "model tidak tersedia"),
+            ("Human/zone", f"human_count={record['human_count']}, zone_track_ids={record['zone_track_ids'] or '-'}"),
+            ("Motion boxes", str(record["detected_motion_boxes"])),
+        ]
+        detail_html = "\n".join(
+            f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>" for label, value in details
+        )
+        cards.append(
+            f"""
+            <article class="card">
+              <img src="{html.escape(image_src)}" alt="Frame anomali {html.escape(str(record['frame_index']))}">
+              <section class="content">
+                <div class="meta">Frame {html.escape(str(record['frame_index']))} - {html.escape(record['timestamp'])}</div>
+                <h2>{html.escape(record['label'])}</h2>
+                <p class="reason">{html.escape(record['reason'])}</p>
+                <p>{html.escape(record['evidence_summary'])}</p>
+                <table>{detail_html}</table>
+              </section>
+            </article>
+            """
+        )
+
+    body = "\n".join(cards) if cards else "<p>Belum ada foto anomali tersimpan.</p>"
+    document = f"""<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laporan Deteksi Anomali CCTV</title>
+  <style>
+    body {{ margin: 0; font-family: Arial, sans-serif; background: #f5f7fb; color: #17202a; }}
+    header {{ padding: 24px 32px; background: #152238; color: white; }}
+    h1 {{ margin: 0 0 6px; font-size: 24px; }}
+    main {{ padding: 24px; display: grid; gap: 18px; }}
+    .card {{ display: grid; grid-template-columns: minmax(260px, 480px) 1fr; gap: 18px; background: white; border: 1px solid #dde3ee; border-radius: 8px; overflow: hidden; }}
+    .card img {{ width: 100%; height: 100%; min-height: 260px; object-fit: cover; background: #101820; }}
+    .content {{ padding: 18px; }}
+    .meta {{ color: #637083; font-size: 13px; margin-bottom: 6px; }}
+    h2 {{ margin: 0 0 10px; font-size: 22px; color: #b42318; }}
+    p {{ line-height: 1.5; }}
+    .reason {{ font-weight: 700; }}
+    table {{ border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 14px; }}
+    th, td {{ border-top: 1px solid #e5eaf1; padding: 8px; text-align: left; vertical-align: top; }}
+    th {{ width: 160px; color: #465466; }}
+    @media (max-width: 780px) {{ .card {{ grid-template-columns: 1fr; }} header, main {{ padding: 16px; }} }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Laporan Deteksi Anomali CCTV</h1>
+    <div>Total foto anomali: {len(records)}</div>
+  </header>
+  <main>
+    {body}
+  </main>
+</body>
+</html>
+"""
+    report_path.write_text(document, encoding="utf-8")
+    return report_path
 
 
 def write_metadata(config: RuntimeConfig):
@@ -869,8 +972,11 @@ def calibrate_normal(config: RuntimeConfig, frames: int = 300, percentile_value:
 
 def run(config: RuntimeConfig):
     apply_calibration(config)
-    anomaly_dir, video_dir, log_path, evidence_log_path = ensure_outputs(config)
+    anomaly_dir, report_dir, video_dir, log_path, evidence_log_path = ensure_outputs(config)
     metadata_path = write_metadata(config)
+    report_path = report_dir / f"anomaly_report_{timestamp()}.html"
+    report_records: list[dict[str, Any]] = []
+    write_html_report(report_path, report_dir, report_records)
 
     cap = cv2.VideoCapture(config.source)
     if not cap.isOpened():
@@ -889,6 +995,7 @@ def run(config: RuntimeConfig):
         print("Output video:", video_path)
 
     print("Output foto anomali:", anomaly_dir)
+    print("Output laporan HTML:", report_path)
     print("Log CSV:", log_path)
     print("Log bukti anomali:", evidence_log_path)
     print("Definisi anomali:", metadata_path)
@@ -931,7 +1038,11 @@ def run(config: RuntimeConfig):
                     image_path = anomaly_dir / f"anomaly_frame_{metrics['frame_index']:06d}_{timestamp()}.jpg"
                     cv2.imwrite(str(image_path), annotated)
                     append_log(log_path, metrics, image_path)
-                    append_evidence_log(evidence_log_path, config, detector, metrics, image_path)
+                    evidence_record = build_evidence_record(config, detector, metrics, image_path)
+                    append_evidence_log(evidence_log_path, evidence_record)
+                    write_explanation_json(report_dir, evidence_record)
+                    report_records.append(evidence_record)
+                    write_html_report(report_path, report_dir, report_records)
                     saved_photo_counter += 1
 
             if writer is not None:
@@ -955,6 +1066,7 @@ def run(config: RuntimeConfig):
     print("Total frame diproses:", frame_index)
     print("Total frame terdeteksi anomali:", anomaly_frame_counter)
     print("Total foto anomali tersimpan:", saved_photo_counter)
+    print("Laporan HTML:", report_path)
 
 
 def build_arg_parser():
