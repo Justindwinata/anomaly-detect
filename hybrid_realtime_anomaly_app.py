@@ -45,7 +45,7 @@ except Exception:
 
 
 WORKSPACE = Path(__file__).resolve().parent
-DEFAULT_MODEL_PATH = WORKSPACE / "cctv-video-anomaly-detection-main" / "outputs" / "trained_model.pth"
+DEFAULT_MODEL_PATH = WORKSPACE / "models" / "trained_model.pth"
 DEFAULT_OUTPUT_DIR = WORKSPACE / "hybrid_outputs"
 
 ANOMALY_CATEGORY = {
