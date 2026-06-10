@@ -563,6 +563,7 @@ def ensure_outputs(config: RuntimeConfig):
     anomaly_dir = config.output_dir / "anomaly_frames"
     video_dir = config.output_dir / "videos"
     log_path = config.output_dir / "anomaly_log_v2.csv"
+    evidence_log_path = config.output_dir / "anomaly_evidence_log.csv"
     config.output_dir.mkdir(parents=True, exist_ok=True)
     anomaly_dir.mkdir(parents=True, exist_ok=True)
     video_dir.mkdir(parents=True, exist_ok=True)
@@ -586,7 +587,40 @@ def ensure_outputs(config: RuntimeConfig):
                     "included_anomaly_examples",
                 ]
             )
-    return anomaly_dir, video_dir, log_path
+    if not evidence_log_path.exists():
+        with evidence_log_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "timestamp",
+                    "frame_index",
+                    "label",
+                    "image_file",
+                    "image_path",
+                    "image_hyperlink",
+                    "reason",
+                    "evidence_summary",
+                    "combined_score",
+                    "combined_threshold",
+                    "raw_anomaly_streak",
+                    "min_anomaly_frames",
+                    "motion_area_ratio",
+                    "motion_area_threshold",
+                    "motion_score",
+                    "flow_mean",
+                    "flow_threshold",
+                    "flow_score",
+                    "reconstruction_error",
+                    "model_threshold",
+                    "autoencoder_score",
+                    "human_count",
+                    "zone_track_ids",
+                    "zone_loiter_frames",
+                    "detected_motion_boxes",
+                    "included_anomaly_examples",
+                ]
+            )
+    return anomaly_dir, video_dir, log_path, evidence_log_path
 
 
 def append_log(log_path: Path, metrics: dict[str, Any], image_path: Path):
@@ -605,6 +639,74 @@ def append_log(log_path: Path, metrics: dict[str, Any], image_path: Path):
                 "|".join(str(track["id"]) for track in metrics.get("zone_tracks", [])),
                 metrics.get("reason", ""),
                 str(image_path),
+                " | ".join(ANOMALY_CATEGORY["included_events"]),
+            ]
+        )
+
+
+def build_evidence_summary(config: RuntimeConfig, metrics: dict[str, Any], detector: HybridAnomalyDetector):
+    evidence = [
+        f"combined_score {metrics['combined_score']:.3f} >= threshold {config.combined_threshold:.3f}",
+        f"streak {metrics['raw_anomaly_streak']}/{config.min_anomaly_frames} frame",
+        f"motion_area_ratio {metrics['motion_area_ratio']:.4f} vs threshold {config.motion_area_threshold:.4f}",
+        f"flow_mean {metrics['flow_mean']:.3f} vs threshold {config.flow_threshold:.3f}",
+    ]
+    if metrics["reconstruction_error"] is None:
+        evidence.append("autoencoder tidak dipakai/model tidak tersedia")
+    else:
+        evidence.append(
+            f"reconstruction_error {metrics['reconstruction_error']:.6f} "
+            f"dengan ae_score {metrics['autoencoder_score']:.3f}"
+        )
+    if metrics.get("zone_tracks"):
+        ids = ", ".join(str(track["id"]) for track in metrics["zone_tracks"])
+        evidence.append(f"track manusia dalam alert zone: {ids}")
+    elif metrics.get("tracks"):
+        evidence.append(f"human/object tracks terdeteksi: {len(metrics['tracks'])}")
+    if metrics.get("boxes"):
+        evidence.append(f"area gerakan terdeteksi: {len(metrics['boxes'])} bounding box")
+    return "; ".join(evidence)
+
+
+def append_evidence_log(
+    evidence_log_path: Path,
+    config: RuntimeConfig,
+    detector: HybridAnomalyDetector,
+    metrics: dict[str, Any],
+    image_path: Path,
+):
+    image_path = image_path.resolve()
+    hyperlink = f'=HYPERLINK("{image_path}", "lihat foto")'
+    zone_track_ids = "|".join(str(track["id"]) for track in metrics.get("zone_tracks", []))
+    with evidence_log_path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                datetime.now().isoformat(timespec="seconds"),
+                metrics["frame_index"],
+                "ANOMALY",
+                image_path.name,
+                str(image_path),
+                hyperlink,
+                metrics.get("reason", ""),
+                build_evidence_summary(config, metrics, detector),
+                f"{metrics['combined_score']:.6f}",
+                f"{config.combined_threshold:.6f}",
+                metrics["raw_anomaly_streak"],
+                config.min_anomaly_frames,
+                f"{metrics['motion_area_ratio']:.6f}",
+                f"{config.motion_area_threshold:.6f}",
+                f"{metrics['motion_score']:.6f}",
+                f"{metrics['flow_mean']:.6f}",
+                f"{config.flow_threshold:.6f}",
+                f"{metrics['flow_score']:.6f}",
+                "" if metrics["reconstruction_error"] is None else f"{metrics['reconstruction_error']:.8f}",
+                "" if detector.model_threshold is None else f"{detector.model_threshold:.8f}",
+                f"{metrics['autoencoder_score']:.6f}",
+                len(metrics.get("tracks", [])),
+                zone_track_ids,
+                config.zone_loiter_frames,
+                len(metrics.get("boxes", [])),
                 " | ".join(ANOMALY_CATEGORY["included_events"]),
             ]
         )
@@ -767,7 +869,7 @@ def calibrate_normal(config: RuntimeConfig, frames: int = 300, percentile_value:
 
 def run(config: RuntimeConfig):
     apply_calibration(config)
-    anomaly_dir, video_dir, log_path = ensure_outputs(config)
+    anomaly_dir, video_dir, log_path, evidence_log_path = ensure_outputs(config)
     metadata_path = write_metadata(config)
 
     cap = cv2.VideoCapture(config.source)
@@ -788,6 +890,7 @@ def run(config: RuntimeConfig):
 
     print("Output foto anomali:", anomaly_dir)
     print("Log CSV:", log_path)
+    print("Log bukti anomali:", evidence_log_path)
     print("Definisi anomali:", metadata_path)
     print("Konfigurasi deteksi:")
     print("  combined_threshold:", config.combined_threshold)
@@ -828,6 +931,7 @@ def run(config: RuntimeConfig):
                     image_path = anomaly_dir / f"anomaly_frame_{metrics['frame_index']:06d}_{timestamp()}.jpg"
                     cv2.imwrite(str(image_path), annotated)
                     append_log(log_path, metrics, image_path)
+                    append_evidence_log(evidence_log_path, config, detector, metrics, image_path)
                     saved_photo_counter += 1
 
             if writer is not None:

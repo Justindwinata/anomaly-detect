@@ -44,8 +44,11 @@ Hasil runtime otomatis disimpan secara lokal dan tidak ikut masuk GitHub:
 
 - `hybrid_outputs/anomaly_frames/`
 - `hybrid_outputs/anomaly_log_v2.csv`
+- `hybrid_outputs/anomaly_evidence_log.csv`
 - `hybrid_outputs/videos/`
 - `outputs/`
+
+`anomaly_evidence_log.csv` adalah log detail untuk laporan. Isinya mencakup nama/path foto anomali, link foto, alasan deteksi, score gabungan, threshold, motion score, optical-flow score, autoencoder score jika model tersedia, jumlah track manusia, dan contoh kategori anomali seperti pencurian, vandalism, serta abusive/violence.
 
 ## Catatan Model
 
