@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="8">
+  <title>Job {{ job.id }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <a class="back" href="{{ url_for('index') }}">Kembali</a>
+      <h1>{{ job.name }}</h1>
+      <p>{{ job.type }} · {{ job.source }}</p>
+    </div>
+    <b class="status {{ job.status }}">{{ job.status }}</b>
+  </header>
+
+  <main class="job-layout">
+    <section class="panel">
+      <h2>Output</h2>
+      <dl class="facts">
+        <dt>Created</dt>
+        <dd>{{ job.created_at }}</dd>
+        <dt>Started</dt>
+        <dd>{{ job.started_at or "-" }}</dd>
+        <dt>Finished</dt>
+        <dd>{{ job.finished_at or "-" }}</dd>
+        <dt>Return code</dt>
+        <dd>{{ job.returncode if job.returncode is defined else "-" }}</dd>
+      </dl>
+      <div class="actions">
+        {% if report_url %}
+          <a class="button" href="{{ report_url }}" target="_blank">Buka Report HTML</a>
+        {% endif %}
+        {% if log_url %}
+          <a class="button ghost" href="{{ log_url }}" target="_blank">Download Evidence CSV</a>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Terminal Output</h2>
+      <pre>{{ job.stdout or "Belum ada output." }}</pre>
+      {% if job.stderr %}
+        <h3>Error</h3>
+        <pre class="error">{{ job.stderr }}</pre>
+      {% endif %}
+    </section>
+
+    <section class="panel wide">
+      <div class="section-head">
+        <h2>Report Preview</h2>
+        <a class="ghost" href="{{ url_for('job_detail', job_id=job.id) }}">Refresh</a>
+      </div>
+      {% if report_url %}
+        <iframe src="{{ report_url }}" title="Anomaly report"></iframe>
+      {% else %}
+        <p class="empty">Report belum tersedia. Halaman ini refresh otomatis.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

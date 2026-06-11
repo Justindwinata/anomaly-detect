@@ -5,6 +5,7 @@ Program deteksi anomali CCTV untuk tugas Computer Vision. Output utama adalah la
 ## Isi Utama
 
 - `hybrid_realtime_anomaly_app.py` - aplikasi utama untuk webcam, video CCTV, atau RTSP.
+- `web_app.py` - aplikasi web Flask untuk upload video, menjalankan deteksi, dan melihat report.
 - `generate_anomaly_report.py` - membuat laporan HTML berisi foto anomali dan penjelasannya.
 - `Hybrid_CCTV_Anomaly_Detection_App.ipynb` - notebook ringkas untuk menjalankan aplikasi hybrid.
 - `CCTV_Anomaly_Detection_Realtime.ipynb` - notebook eksperimen awal/end-to-end.
@@ -39,6 +40,22 @@ Jika tidak ingin membuka window:
 python3 hybrid_realtime_anomaly_app.py --source data/cctv.mp4 --sensitivity high --no-human-tracking --no-window
 ```
 
+## Menjalankan Aplikasi Web
+
+Jalankan server web lokal:
+
+```bash
+python3 web_app.py
+```
+
+Buka browser ke:
+
+```text
+http://127.0.0.1:8090
+```
+
+Dari web, pengguna bisa upload video CCTV, menjalankan deteksi sebagai job, melihat status proses, membuka report HTML, dan mengunduh evidence CSV. Form realtime/device source juga tersedia untuk menjalankan source kamera lokal seperti `0`, path video, atau URL stream/IP camera.
+
 ## Output
 
 Hasil runtime otomatis disimpan secara lokal dan tidak ikut masuk GitHub:
@@ -50,6 +67,7 @@ Hasil runtime otomatis disimpan secara lokal dan tidak ikut masuk GitHub:
 - `hybrid_outputs/anomaly_evidence_log.csv`
 - `hybrid_outputs/videos/`
 - `outputs/`
+- `web_outputs/`
 
 `anomaly_evidence_log.csv` adalah log detail untuk laporan. Isinya mencakup nama/path foto anomali, link foto, alasan deteksi, score gabungan, threshold, motion score, optical-flow score, autoencoder score jika model tersedia, jumlah track manusia, dan contoh kategori anomali seperti pencurian, vandalism, serta abusive/violence.
 

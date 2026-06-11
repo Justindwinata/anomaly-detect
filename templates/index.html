@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCTV Anomaly Detection</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>CCTV Anomaly Detection</h1>
+      <p>Web control panel untuk menjalankan deteksi dan melihat hasil report.</p>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <h2>Upload Video</h2>
+      <form action="{{ url_for('upload_video') }}" method="post" enctype="multipart/form-data" class="stack">
+        <label>
+          Video CCTV
+          <input type="file" name="video" accept=".mp4,.avi,.mov,.mkv,.webm" required>
+        </label>
+        <div class="grid">
+          <label>
+            Sensitivity
+            <select name="sensitivity">
+              <option value="high" selected>high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+              <option value="very_low">very_low</option>
+            </select>
+          </label>
+          <label>
+            Threshold
+            <input type="number" name="threshold" step="0.001" placeholder="optional">
+          </label>
+          <label>
+            Max frames
+            <input type="number" name="max_frames" min="1" placeholder="optional">
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" name="human_tracking">
+          Human tracking
+        </label>
+        <label class="check">
+          <input type="checkbox" name="save_video">
+          Simpan video hasil
+        </label>
+        <button type="submit">Mulai Deteksi Video</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Realtime / Device Source</h2>
+      <form action="{{ url_for('start_realtime') }}" method="post" class="stack">
+        <label>
+          Source
+          <input type="text" name="source" value="0">
+        </label>
+        <div class="grid">
+          <label>
+            Sensitivity
+            <select name="sensitivity">
+              <option value="high" selected>high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+              <option value="very_low">very_low</option>
+            </select>
+          </label>
+          <label>
+            Threshold
+            <input type="number" name="threshold" step="0.001" placeholder="optional">
+          </label>
+          <label>
+            Max frames
+            <input type="number" name="max_frames" min="1" value="300">
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" name="human_tracking">
+          Human tracking
+        </label>
+        <label class="check">
+          <input type="checkbox" name="save_video">
+          Simpan video hasil
+        </label>
+        <button type="submit">Mulai Realtime</button>
+      </form>
+    </section>
+
+    <section class="panel wide">
+      <div class="section-head">
+        <h2>Riwayat Job</h2>
+        <a class="ghost" href="{{ url_for('index') }}">Refresh</a>
+      </div>
+      <div class="jobs">
+        {% for job in jobs %}
+          <a class="job-row" href="{{ url_for('job_detail', job_id=job.id) }}">
+            <span>
+              <strong>{{ job.name }}</strong>
+              <small>{{ job.created_at }} · {{ job.type }} · {{ job.source }}</small>
+            </span>
+            <b class="status {{ job.status }}">{{ job.status }}</b>
+          </a>
+        {% else %}
+          <p class="empty">Belum ada job.</p>
+        {% endfor %}
+      </div>
+    </section>
+  </main>
+</body>
+</html>
