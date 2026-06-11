@@ -53,7 +53,9 @@ Hasil runtime otomatis disimpan secara lokal dan tidak ikut masuk GitHub:
 
 `anomaly_evidence_log.csv` adalah log detail untuk laporan. Isinya mencakup nama/path foto anomali, link foto, alasan deteksi, score gabungan, threshold, motion score, optical-flow score, autoencoder score jika model tersedia, jumlah track manusia, dan contoh kategori anomali seperti pencurian, vandalism, serta abusive/violence.
 
-Selain CSV, program utama juga otomatis membuat laporan HTML di `hybrid_outputs/anomaly_reports/html/`. Laporan ini berisi kartu per foto anomali: gambar, alasan, dan bukti pendukung dari skor deteksi. File JSON detail per foto disimpan terpisah di `hybrid_outputs/anomaly_reports/json/`.
+Jika folder output masih memiliki CSV lama dengan format kolom lama, program akan menulis log detail baru ke `anomaly_evidence_log_enhanced.csv` agar data lama tidak rusak.
+
+Selain CSV, program utama juga otomatis membuat laporan HTML di `hybrid_outputs/anomaly_reports/html/`. Laporan ini berisi kartu per foto anomali: gambar, alasan, confidence level, severity, kemungkinan kejadian, durasi anomali, region gerakan dominan, skor deteksi, dan penjelasan otomatis berbentuk kalimat. File JSON detail per foto disimpan terpisah di `hybrid_outputs/anomaly_reports/json/`.
 
 Jika ingin membuat ulang laporan HTML dari CSV yang sudah ada:
 

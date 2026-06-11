@@ -62,6 +62,47 @@ ANOMALY_CATEGORY = {
     ],
 }
 
+EVIDENCE_LOG_COLUMNS = [
+    "timestamp",
+    "frame_index",
+    "label",
+    "image_file",
+    "image_path",
+    "image_hyperlink",
+    "reason",
+    "evidence_summary",
+    "confidence_level",
+    "severity",
+    "possible_event",
+    "natural_language_explanation",
+    "combined_score",
+    "combined_threshold",
+    "score_vs_threshold",
+    "raw_anomaly_streak",
+    "min_anomaly_frames",
+    "anomaly_duration_frames",
+    "anomaly_duration_seconds",
+    "motion_area_ratio",
+    "motion_area_threshold",
+    "motion_vs_threshold",
+    "motion_score",
+    "flow_mean",
+    "flow_threshold",
+    "flow_vs_threshold",
+    "flow_score",
+    "reconstruction_error",
+    "model_threshold",
+    "autoencoder_score",
+    "human_count",
+    "zone_track_ids",
+    "zone_loiter_frames",
+    "detected_motion_boxes",
+    "largest_motion_box",
+    "largest_motion_box_area_ratio",
+    "dominant_motion_region",
+    "included_anomaly_examples",
+]
+
 
 @dataclass
 class RuntimeConfig:
@@ -561,6 +602,20 @@ def draw_overlay(frame, metrics, fps):
     return output
 
 
+def select_evidence_log_path(output_dir: Path):
+    base_path = output_dir / "anomaly_evidence_log.csv"
+    enhanced_path = output_dir / "anomaly_evidence_log_enhanced.csv"
+    if not base_path.exists():
+        return base_path
+
+    with base_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        header = next(reader, [])
+    if header == EVIDENCE_LOG_COLUMNS:
+        return base_path
+    return enhanced_path
+
+
 def ensure_outputs(config: RuntimeConfig):
     anomaly_dir = config.output_dir / "anomaly_frames"
     report_dir = config.output_dir / "anomaly_reports"
@@ -568,7 +623,7 @@ def ensure_outputs(config: RuntimeConfig):
     json_report_dir = report_dir / "json"
     video_dir = config.output_dir / "videos"
     log_path = config.output_dir / "anomaly_log_v2.csv"
-    evidence_log_path = config.output_dir / "anomaly_evidence_log.csv"
+    evidence_log_path = select_evidence_log_path(config.output_dir)
     config.output_dir.mkdir(parents=True, exist_ok=True)
     anomaly_dir.mkdir(parents=True, exist_ok=True)
     html_report_dir.mkdir(parents=True, exist_ok=True)
@@ -597,36 +652,7 @@ def ensure_outputs(config: RuntimeConfig):
     if not evidence_log_path.exists():
         with evidence_log_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(
-                [
-                    "timestamp",
-                    "frame_index",
-                    "label",
-                    "image_file",
-                    "image_path",
-                    "image_hyperlink",
-                    "reason",
-                    "evidence_summary",
-                    "combined_score",
-                    "combined_threshold",
-                    "raw_anomaly_streak",
-                    "min_anomaly_frames",
-                    "motion_area_ratio",
-                    "motion_area_threshold",
-                    "motion_score",
-                    "flow_mean",
-                    "flow_threshold",
-                    "flow_score",
-                    "reconstruction_error",
-                    "model_threshold",
-                    "autoencoder_score",
-                    "human_count",
-                    "zone_track_ids",
-                    "zone_loiter_frames",
-                    "detected_motion_boxes",
-                    "included_anomaly_examples",
-                ]
-            )
+            writer.writerow(EVIDENCE_LOG_COLUMNS)
     return anomaly_dir, html_report_dir, json_report_dir, video_dir, log_path, evidence_log_path
 
 
@@ -651,9 +677,104 @@ def append_log(log_path: Path, metrics: dict[str, Any], image_path: Path):
         )
 
 
+def safe_float(value: Any, default: float = 0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def classify_confidence(combined_score: float, threshold: float):
+    ratio = combined_score / max(threshold, 1e-8)
+    if ratio >= 3.0:
+        return "HIGH"
+    if ratio >= 1.6:
+        return "MEDIUM"
+    return "LOW"
+
+
+def classify_severity(metrics: dict[str, Any], config: RuntimeConfig):
+    score_ratio = metrics["combined_score"] / max(config.combined_threshold, 1e-8)
+    motion_ratio = metrics["motion_area_ratio"] / max(config.motion_area_threshold, 1e-8)
+    flow_ratio = metrics["flow_mean"] / max(config.flow_threshold, 1e-8)
+    streak_ratio = metrics["raw_anomaly_streak"] / max(config.min_anomaly_frames, 1)
+    severity_score = 0.45 * score_ratio + 0.25 * motion_ratio + 0.15 * flow_ratio + 0.15 * streak_ratio
+    if severity_score >= 4.0:
+        return "CRITICAL"
+    if severity_score >= 2.3:
+        return "HIGH"
+    if severity_score >= 1.2:
+        return "MODERATE"
+    return "LOW"
+
+
+def motion_box_summary(metrics: dict[str, Any], config: RuntimeConfig):
+    boxes = metrics.get("boxes", [])
+    if not boxes:
+        return {
+            "largest_motion_box": "",
+            "largest_motion_box_area_ratio": 0.0,
+            "dominant_motion_region": "unknown",
+        }
+
+    largest = max(boxes, key=lambda box: box[2] * box[3])
+    x, y, w, h = largest
+    center_x = x + w / 2
+    center_y = y + h / 2
+    horizontal = "left" if center_x < config.frame_width / 3 else "right" if center_x > 2 * config.frame_width / 3 else "center"
+    vertical = "top" if center_y < config.frame_height / 3 else "bottom" if center_y > 2 * config.frame_height / 3 else "middle"
+    area_ratio = (w * h) / max(config.frame_width * config.frame_height, 1)
+    return {
+        "largest_motion_box": f"x={x},y={y},w={w},h={h}",
+        "largest_motion_box_area_ratio": area_ratio,
+        "dominant_motion_region": f"{vertical}-{horizontal}",
+    }
+
+
+def infer_possible_event(metrics: dict[str, Any], config: RuntimeConfig):
+    motion_ratio = metrics["motion_area_ratio"] / max(config.motion_area_threshold, 1e-8)
+    flow_ratio = metrics["flow_mean"] / max(config.flow_threshold, 1e-8)
+    has_zone_track = bool(metrics.get("zone_tracks"))
+    has_tracks = bool(metrics.get("tracks"))
+    box_count = len(metrics.get("boxes", []))
+
+    if has_zone_track:
+        return "restricted-area activity or loitering"
+    if motion_ratio >= 2.5 and flow_ratio >= 1.0:
+        return "sudden aggressive movement or possible violence/vandalism"
+    if motion_ratio >= 2.0 and box_count >= 2:
+        return "multiple suspicious object/person movements"
+    if has_tracks and metrics["raw_anomaly_streak"] >= config.zone_loiter_frames:
+        return "possible loitering"
+    if motion_ratio >= 1.0:
+        return "suspicious movement or object interaction"
+    return "visual pattern differs from normal baseline"
+
+
+def build_natural_explanation(config: RuntimeConfig, metrics: dict[str, Any], record: dict[str, Any]):
+    motion_multiplier = safe_float(record["motion_vs_threshold"])
+    flow_multiplier = safe_float(record["flow_vs_threshold"])
+    score_multiplier = safe_float(record["score_vs_threshold"])
+    duration = safe_float(record["anomaly_duration_seconds"])
+    score_status = (
+        f"skor gabungan melewati ambang deteksi sebesar {score_multiplier:.2f}x"
+        if score_multiplier >= 1.0
+        else f"status anomali masih aktif dari streak sebelumnya, dengan skor saat ini {score_multiplier:.2f}x dari ambang"
+    )
+    return (
+        f"Frame ini dikategorikan sebagai ANOMALY karena {score_status}. Area gerakan terukur {motion_multiplier:.2f}x dari "
+        f"ambang motion dan optical flow berada pada {flow_multiplier:.2f}x dari ambang flow. "
+        f"Indikasi ini bertahan selama sekitar {duration:.2f} detik atau "
+        f"{record['anomaly_duration_frames']} frame, sehingga bukan hanya noise sesaat. "
+        f"Region gerakan dominan berada di {record['dominant_motion_region']}, dengan dugaan kejadian: "
+        f"{record['possible_event']}."
+    )
+
+
 def build_evidence_summary(config: RuntimeConfig, metrics: dict[str, Any], detector: HybridAnomalyDetector):
+    score_operator = ">=" if metrics["combined_score"] >= config.combined_threshold else "<"
     evidence = [
-        f"combined_score {metrics['combined_score']:.3f} >= threshold {config.combined_threshold:.3f}",
+        f"combined_score {metrics['combined_score']:.3f} {score_operator} threshold {config.combined_threshold:.3f}",
         f"streak {metrics['raw_anomaly_streak']}/{config.min_anomaly_frames} frame",
         f"motion_area_ratio {metrics['motion_area_ratio']:.4f} vs threshold {config.motion_area_threshold:.4f}",
         f"flow_mean {metrics['flow_mean']:.3f} vs threshold {config.flow_threshold:.3f}",
@@ -677,24 +798,43 @@ def build_evidence_summary(config: RuntimeConfig, metrics: dict[str, Any], detec
 
 def build_evidence_record(config: RuntimeConfig, detector: HybridAnomalyDetector, metrics: dict[str, Any], image_path: Path):
     image_path = image_path.resolve()
-    return {
+    score_vs_threshold = metrics["combined_score"] / max(config.combined_threshold, 1e-8)
+    motion_vs_threshold = metrics["motion_area_ratio"] / max(config.motion_area_threshold, 1e-8)
+    flow_vs_threshold = metrics["flow_mean"] / max(config.flow_threshold, 1e-8)
+    estimated_fps = 20.0
+    anomaly_duration_frames = int(metrics["raw_anomaly_streak"])
+    box_summary = motion_box_summary(metrics, config)
+    reason = metrics.get("reason", "")
+    if metrics.get("is_anomaly") and reason == "normal":
+        reason = "active anomaly state from previous suspicious frame streak"
+
+    record = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "frame_index": metrics["frame_index"],
         "label": "ANOMALY",
         "image_file": image_path.name,
         "image_path": str(image_path),
         "image_hyperlink": f'=HYPERLINK("{image_path}", "lihat foto")',
-        "reason": metrics.get("reason", ""),
+        "reason": reason,
         "evidence_summary": build_evidence_summary(config, metrics, detector),
+        "confidence_level": classify_confidence(metrics["combined_score"], config.combined_threshold),
+        "severity": classify_severity(metrics, config),
+        "possible_event": infer_possible_event(metrics, config),
+        "natural_language_explanation": "",
         "combined_score": f"{metrics['combined_score']:.6f}",
         "combined_threshold": f"{config.combined_threshold:.6f}",
+        "score_vs_threshold": f"{score_vs_threshold:.3f}",
         "raw_anomaly_streak": metrics["raw_anomaly_streak"],
         "min_anomaly_frames": config.min_anomaly_frames,
+        "anomaly_duration_frames": anomaly_duration_frames,
+        "anomaly_duration_seconds": f"{anomaly_duration_frames / estimated_fps:.2f}",
         "motion_area_ratio": f"{metrics['motion_area_ratio']:.6f}",
         "motion_area_threshold": f"{config.motion_area_threshold:.6f}",
+        "motion_vs_threshold": f"{motion_vs_threshold:.3f}",
         "motion_score": f"{metrics['motion_score']:.6f}",
         "flow_mean": f"{metrics['flow_mean']:.6f}",
         "flow_threshold": f"{config.flow_threshold:.6f}",
+        "flow_vs_threshold": f"{flow_vs_threshold:.3f}",
         "flow_score": f"{metrics['flow_score']:.6f}",
         "reconstruction_error": "" if metrics["reconstruction_error"] is None else f"{metrics['reconstruction_error']:.8f}",
         "model_threshold": "" if detector.model_threshold is None else f"{detector.model_threshold:.8f}",
@@ -703,8 +843,13 @@ def build_evidence_record(config: RuntimeConfig, detector: HybridAnomalyDetector
         "zone_track_ids": "|".join(str(track["id"]) for track in metrics.get("zone_tracks", [])),
         "zone_loiter_frames": config.zone_loiter_frames,
         "detected_motion_boxes": len(metrics.get("boxes", [])),
+        "largest_motion_box": box_summary["largest_motion_box"],
+        "largest_motion_box_area_ratio": f"{box_summary['largest_motion_box_area_ratio']:.6f}",
+        "dominant_motion_region": box_summary["dominant_motion_region"],
         "included_anomaly_examples": " | ".join(ANOMALY_CATEGORY["included_events"]),
     }
+    record["natural_language_explanation"] = build_natural_explanation(config, metrics, record)
+    return record
 
 
 def append_evidence_log(evidence_log_path: Path, record: dict[str, Any]):
@@ -720,15 +865,24 @@ def append_evidence_log(evidence_log_path: Path, record: dict[str, Any]):
                 record["image_hyperlink"],
                 record["reason"],
                 record["evidence_summary"],
+                record["confidence_level"],
+                record["severity"],
+                record["possible_event"],
+                record["natural_language_explanation"],
                 record["combined_score"],
                 record["combined_threshold"],
+                record["score_vs_threshold"],
                 record["raw_anomaly_streak"],
                 record["min_anomaly_frames"],
+                record["anomaly_duration_frames"],
+                record["anomaly_duration_seconds"],
                 record["motion_area_ratio"],
                 record["motion_area_threshold"],
+                record["motion_vs_threshold"],
                 record["motion_score"],
                 record["flow_mean"],
                 record["flow_threshold"],
+                record["flow_vs_threshold"],
                 record["flow_score"],
                 record["reconstruction_error"],
                 record["model_threshold"],
@@ -737,6 +891,9 @@ def append_evidence_log(evidence_log_path: Path, record: dict[str, Any]):
                 record["zone_track_ids"],
                 record["zone_loiter_frames"],
                 record["detected_motion_boxes"],
+                record["largest_motion_box"],
+                record["largest_motion_box_area_ratio"],
+                record["dominant_motion_region"],
                 record["included_anomaly_examples"],
             ]
         )
@@ -753,12 +910,19 @@ def write_html_report(report_path: Path, report_dir: Path, records: list[dict[st
     for record in records:
         image_src = os.path.relpath(record["image_path"], start=report_dir)
         details = [
+            ("Confidence", record["confidence_level"]),
+            ("Severity", record["severity"]),
+            ("Possible event", record["possible_event"]),
+            ("Duration", f"{record['anomaly_duration_seconds']} sec / {record['anomaly_duration_frames']} frames"),
             ("Combined score", f"{record['combined_score']} / threshold {record['combined_threshold']}"),
-            ("Motion", f"area {record['motion_area_ratio']}, score {record['motion_score']}"),
-            ("Optical flow", f"mean {record['flow_mean']}, score {record['flow_score']}"),
+            ("Score ratio", f"{record['score_vs_threshold']}x threshold"),
+            ("Motion", f"area {record['motion_area_ratio']}, score {record['motion_score']}, {record['motion_vs_threshold']}x threshold"),
+            ("Optical flow", f"mean {record['flow_mean']}, score {record['flow_score']}, {record['flow_vs_threshold']}x threshold"),
             ("Autoencoder", record["reconstruction_error"] or "model tidak tersedia"),
             ("Human/zone", f"human_count={record['human_count']}, zone_track_ids={record['zone_track_ids'] or '-'}"),
             ("Motion boxes", str(record["detected_motion_boxes"])),
+            ("Largest motion box", record["largest_motion_box"] or "-"),
+            ("Dominant region", record["dominant_motion_region"]),
         ]
         detail_html = "\n".join(
             f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>" for label, value in details
@@ -771,6 +935,7 @@ def write_html_report(report_path: Path, report_dir: Path, records: list[dict[st
                 <div class="meta">Frame {html.escape(str(record['frame_index']))} - {html.escape(record['timestamp'])}</div>
                 <h2>{html.escape(record['label'])}</h2>
                 <p class="reason">{html.escape(record['reason'])}</p>
+                <p class="explanation">{html.escape(record['natural_language_explanation'])}</p>
                 <p>{html.escape(record['evidence_summary'])}</p>
                 <table>{detail_html}</table>
               </section>
@@ -797,6 +962,7 @@ def write_html_report(report_path: Path, report_dir: Path, records: list[dict[st
     h2 {{ margin: 0 0 10px; font-size: 22px; color: #b42318; }}
     p {{ line-height: 1.5; }}
     .reason {{ font-weight: 700; }}
+    .explanation {{ background: #f1f5fb; border-left: 4px solid #2f6fed; padding: 10px 12px; }}
     table {{ border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 14px; }}
     th, td {{ border-top: 1px solid #e5eaf1; padding: 8px; text-align: left; vertical-align: top; }}
     th {{ width: 160px; color: #465466; }}

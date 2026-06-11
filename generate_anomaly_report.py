@@ -18,6 +18,7 @@ from pathlib import Path
 WORKSPACE = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = WORKSPACE / "hybrid_outputs"
 DEFAULT_CSV_PATH = DEFAULT_OUTPUT_DIR / "anomaly_evidence_log.csv"
+DEFAULT_ENHANCED_CSV_PATH = DEFAULT_OUTPUT_DIR / "anomaly_evidence_log_enhanced.csv"
 DEFAULT_REPORT_DIR = DEFAULT_OUTPUT_DIR / "anomaly_reports" / "html"
 
 
@@ -26,6 +27,12 @@ def read_records(csv_path: Path):
         raise FileNotFoundError(f"CSV tidak ditemukan: {csv_path}")
     with csv_path.open("r", newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def default_csv_path():
+    if DEFAULT_ENHANCED_CSV_PATH.exists():
+        return DEFAULT_ENHANCED_CSV_PATH
+    return DEFAULT_CSV_PATH
 
 
 def row_value(record: dict[str, str], key: str, default: str = "-"):
@@ -41,12 +48,19 @@ def write_report(records: list[dict[str, str]], report_path: Path):
         image_path = row_value(record, "image_path", "")
         image_src = os.path.relpath(image_path, start=report_path.parent) if image_path else ""
         details = [
+            ("Confidence", row_value(record, "confidence_level")),
+            ("Severity", row_value(record, "severity")),
+            ("Possible event", row_value(record, "possible_event")),
+            ("Duration", f"{row_value(record, 'anomaly_duration_seconds')} sec / {row_value(record, 'anomaly_duration_frames')} frames"),
             ("Combined score", f"{row_value(record, 'combined_score')} / threshold {row_value(record, 'combined_threshold')}"),
-            ("Motion", f"area {row_value(record, 'motion_area_ratio')}, score {row_value(record, 'motion_score')}"),
-            ("Optical flow", f"mean {row_value(record, 'flow_mean')}, score {row_value(record, 'flow_score')}"),
+            ("Score ratio", f"{row_value(record, 'score_vs_threshold')}x threshold"),
+            ("Motion", f"area {row_value(record, 'motion_area_ratio')}, score {row_value(record, 'motion_score')}, {row_value(record, 'motion_vs_threshold')}x threshold"),
+            ("Optical flow", f"mean {row_value(record, 'flow_mean')}, score {row_value(record, 'flow_score')}, {row_value(record, 'flow_vs_threshold')}x threshold"),
             ("Autoencoder", row_value(record, "reconstruction_error", "model tidak tersedia")),
             ("Human/zone", f"human_count={row_value(record, 'human_count')}, zone_track_ids={row_value(record, 'zone_track_ids')}"),
             ("Motion boxes", row_value(record, "detected_motion_boxes")),
+            ("Largest motion box", row_value(record, "largest_motion_box")),
+            ("Dominant region", row_value(record, "dominant_motion_region")),
         ]
         detail_html = "\n".join(
             f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>" for label, value in details
@@ -59,6 +73,7 @@ def write_report(records: list[dict[str, str]], report_path: Path):
                 <div class="meta">Frame {html.escape(row_value(record, 'frame_index'))} - {html.escape(row_value(record, 'timestamp'))}</div>
                 <h2>{html.escape(row_value(record, 'label', 'ANOMALY'))}</h2>
                 <p class="reason">{html.escape(row_value(record, 'reason'))}</p>
+                <p class="explanation">{html.escape(row_value(record, 'natural_language_explanation'))}</p>
                 <p>{html.escape(row_value(record, 'evidence_summary'))}</p>
                 <table>{detail_html}</table>
               </section>
@@ -85,6 +100,7 @@ def write_report(records: list[dict[str, str]], report_path: Path):
     h2 {{ margin: 0 0 10px; font-size: 22px; color: #b42318; }}
     p {{ line-height: 1.5; }}
     .reason {{ font-weight: 700; }}
+    .explanation {{ background: #f1f5fb; border-left: 4px solid #2f6fed; padding: 10px 12px; }}
     table {{ border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 14px; }}
     th, td {{ border-top: 1px solid #e5eaf1; padding: 8px; text-align: left; vertical-align: top; }}
     th {{ width: 160px; color: #465466; }}
@@ -108,7 +124,7 @@ def write_report(records: list[dict[str, str]], report_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate HTML report from anomaly evidence CSV")
-    parser.add_argument("--csv", default=str(DEFAULT_CSV_PATH), help="Path anomaly_evidence_log.csv")
+    parser.add_argument("--csv", default=str(default_csv_path()), help="Path anomaly_evidence_log.csv")
     parser.add_argument("--output", default=None, help="Path output HTML")
     args = parser.parse_args()
 
