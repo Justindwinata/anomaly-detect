@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Webcam {{ session.id }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <a class="back" href="{{ url_for('index') }}">Kembali</a>
+      <h1>Browser Realtime Webcam</h1>
+      <p>Session {{ session.id }}</p>
+    </div>
+    <b id="statusPill" class="status running">waiting</b>
+  </header>
+
+  <main class="live-layout">
+    <section class="panel live-video-panel">
+      <video id="cameraPreview" autoplay playsinline muted></video>
+      <canvas id="captureCanvas" width="640" height="360"></canvas>
+      <div class="actions">
+        <button id="startButton" type="button">Mulai Kamera</button>
+        <button id="stopButton" type="button" class="ghost">Stop</button>
+        <a class="button ghost" href="{{ report_url }}" target="_blank">Buka Report HTML</a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Realtime Result</h2>
+      <dl class="facts live-facts">
+        <dt>Label</dt>
+        <dd id="labelValue">-</dd>
+        <dt>Score</dt>
+        <dd id="scoreValue">-</dd>
+        <dt>Motion</dt>
+        <dd id="motionValue">-</dd>
+        <dt>Flow</dt>
+        <dd id="flowValue">-</dd>
+        <dt>Streak</dt>
+        <dd id="streakValue">-</dd>
+        <dt>Saved</dt>
+        <dd id="savedValue">0</dd>
+        <dt>Reason</dt>
+        <dd id="reasonValue">-</dd>
+      </dl>
+      <p class="empty">Izin kamera diberikan oleh browser. Jika browser meminta akses kamera, pilih Allow/Izinkan.</p>
+    </section>
+
+    <section class="panel wide">
+      <div class="section-head">
+        <h2>Report Preview</h2>
+        <a class="ghost" href="{{ report_url }}" target="_blank">Open Full Report</a>
+      </div>
+      <iframe id="reportFrame" src="{{ report_url }}" title="Live anomaly report"></iframe>
+    </section>
+  </main>
+
+  <script>
+    const sessionId = "{{ session.id }}";
+    const frameDelayMs = Number(new URLSearchParams(window.location.search).get("delay")) || 700;
+    const video = document.getElementById("cameraPreview");
+    const canvas = document.getElementById("captureCanvas");
+    const startButton = document.getElementById("startButton");
+    const stopButton = document.getElementById("stopButton");
+    const statusPill = document.getElementById("statusPill");
+    const reportFrame = document.getElementById("reportFrame");
+    const ctx = canvas.getContext("2d");
+    let stream = null;
+    let running = false;
+    let sending = false;
+
+    function setStatus(text, className) {
+      statusPill.textContent = text;
+      statusPill.className = `status ${className}`;
+    }
+
+    function updateMetric(id, value) {
+      document.getElementById(id).textContent = value;
+    }
+
+    async function sendFrame() {
+      if (!running || sending || video.readyState < 2) {
+        return;
+      }
+      sending = true;
+      canvas.width = 640;
+      canvas.height = 360;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL("image/jpeg", 0.72);
+
+      try {
+        const response = await fetch(`/api/live/${sessionId}/frame`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image }),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.message || "Frame gagal diproses.");
+        }
+        const isAnomaly = result.label === "ANOMALY";
+        setStatus(result.label, isAnomaly ? "anomaly" : "finished");
+        updateMetric("labelValue", result.label);
+        updateMetric("scoreValue", `${result.combined_score} / ${result.threshold}`);
+        updateMetric("motionValue", result.motion_area_ratio);
+        updateMetric("flowValue", result.flow_mean);
+        updateMetric("streakValue", result.streak);
+        updateMetric("savedValue", result.saved);
+        updateMetric("reasonValue", result.reason || "-");
+        if (isAnomaly) {
+          reportFrame.src = result.report_url + `?t=${Date.now()}`;
+        }
+      } catch (error) {
+        setStatus("error", "failed");
+        updateMetric("reasonValue", error.message);
+      } finally {
+        sending = false;
+      }
+    }
+
+    async function startCamera() {
+      if (running) {
+        return;
+      }
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 360 },
+        audio: false,
+      });
+      video.srcObject = stream;
+      running = true;
+      setStatus("running", "running");
+      setInterval(sendFrame, frameDelayMs);
+    }
+
+    async function stopCamera() {
+      running = false;
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      await fetch(`/api/live/${sessionId}/stop`, { method: "POST" });
+      setStatus("stopped", "queued");
+      reportFrame.src = "{{ report_url }}" + `?t=${Date.now()}`;
+    }
+
+    startButton.addEventListener("click", () => {
+      startCamera().catch((error) => {
+        setStatus("camera error", "failed");
+        updateMetric("reasonValue", error.message);
+      });
+    });
+    stopButton.addEventListener("click", stopCamera);
+  </script>
+</body>
+</html>

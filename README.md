@@ -56,6 +56,8 @@ http://127.0.0.1:8090
 
 Dari web, pengguna bisa upload video CCTV, menjalankan deteksi sebagai job, melihat status proses, membuka report HTML, dan mengunduh evidence CSV. Form realtime/device source juga tersedia untuk menjalankan source kamera lokal seperti `0`, path video, atau URL stream/IP camera.
 
+Untuk realtime webcam dari browser, gunakan tombol `Buka Webcam Web`. Browser akan meminta izin kamera, menampilkan preview webcam, mengirim frame ke detector, lalu menampilkan label `NORMAL`/`ANOMALY`, score, reason, serta report HTML langsung dari halaman web.
+
 ## Output
 
 Hasil runtime otomatis disimpan secara lokal dan tidak ikut masuk GitHub:

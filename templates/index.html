@@ -54,6 +54,36 @@
     </section>
 
     <section class="panel">
+      <h2>Browser Realtime Webcam</h2>
+      <form action="{{ url_for('start_live_webcam') }}" method="post" class="stack">
+        <div class="grid">
+          <label>
+            Sensitivity
+            <select name="sensitivity">
+              <option value="high" selected>high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+              <option value="very_low">very_low</option>
+            </select>
+          </label>
+          <label>
+            Threshold
+            <input type="number" name="threshold" step="0.001" placeholder="optional">
+          </label>
+          <label>
+            Frame delay ms
+            <input type="number" name="frame_delay_ms" min="250" value="700">
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" name="human_tracking">
+          Human tracking
+        </label>
+        <button type="submit">Buka Webcam Web</button>
+      </form>
+    </section>
+
+    <section class="panel">
       <h2>Realtime / Device Source</h2>
       <form action="{{ url_for('start_realtime') }}" method="post" class="stack">
         <label>

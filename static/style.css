@@ -45,6 +45,13 @@ p {
   padding: 22px;
 }
 
+.live-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.4fr) minmax(280px, 0.6fr);
+  gap: 18px;
+  padding: 22px;
+}
+
 .panel {
   background: #fff;
   border: 1px solid #dbe2ec;
@@ -180,6 +187,11 @@ button,
   color: #9b1c1c;
 }
 
+.status.anomaly {
+  background: #ffe4e4;
+  color: #9b1c1c;
+}
+
 .facts {
   display: grid;
   grid-template-columns: 120px 1fr;
@@ -217,6 +229,22 @@ iframe {
   background: #fff;
 }
 
+.live-video-panel video {
+  width: 100%;
+  min-height: 360px;
+  border-radius: 8px;
+  background: #101820;
+  object-fit: cover;
+}
+
+.live-video-panel canvas {
+  display: none;
+}
+
+.live-facts {
+  grid-template-columns: 90px 1fr;
+}
+
 .back {
   display: inline-block;
   margin-bottom: 10px;
@@ -231,6 +259,7 @@ iframe {
 @media (max-width: 860px) {
   .layout,
   .job-layout,
+  .live-layout,
   .grid {
     grid-template-columns: 1fr;
   }

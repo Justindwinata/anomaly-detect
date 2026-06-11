@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -9,8 +10,26 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, abort, redirect, render_template, request, send_from_directory, url_for
+import cv2
+import numpy as np
+from flask import Flask, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 from werkzeug.utils import secure_filename
+
+from hybrid_realtime_anomaly_app import (
+    HybridAnomalyDetector,
+    RuntimeConfig,
+    append_evidence_log,
+    append_log,
+    apply_sensitivity_preset,
+    build_evidence_record,
+    draw_overlay,
+    ensure_outputs,
+    resize_frame,
+    timestamp,
+    write_explanation_json,
+    write_html_report,
+    write_metadata,
+)
 
 
 WORKSPACE = Path(__file__).resolve().parent
@@ -18,11 +37,13 @@ DETECTOR_SCRIPT = WORKSPACE / "hybrid_realtime_anomaly_app.py"
 WEB_OUTPUT_DIR = WORKSPACE / "web_outputs"
 UPLOAD_DIR = WEB_OUTPUT_DIR / "uploads"
 JOB_DIR = WEB_OUTPUT_DIR / "jobs"
+LIVE_DIR = WEB_OUTPUT_DIR / "live"
 ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024
+LIVE_SESSIONS: dict[str, dict] = {}
 
 
 def now_iso():
@@ -32,6 +53,7 @@ def now_iso():
 def ensure_web_dirs():
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     JOB_DIR.mkdir(parents=True, exist_ok=True)
+    LIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def job_path(job_id: str):
@@ -113,6 +135,17 @@ def build_detector_command(source: str, output_dir: Path, form_data):
     return command
 
 
+def sensitivity_config(form_data):
+    class Args:
+        threshold = float(form_data.get("threshold") or 0.78)
+        sensitivity = form_data.get("sensitivity", "high")
+        model_threshold_scale = 1.0
+        min_anomaly_frames = None
+        normal_reset_frames = None
+
+    return apply_sensitivity_preset(Args)
+
+
 def run_detection_job(job_id: str, command: list[str]):
     job = read_job(job_id)
     job["status"] = "running"
@@ -169,10 +202,148 @@ def create_job(name: str, source: str, job_type: str, form_data):
     return job_id
 
 
+def create_live_session(form_data):
+    ensure_web_dirs()
+    session_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
+    output_dir = LIVE_DIR / session_id / "outputs"
+    sensitivity = sensitivity_config(form_data)
+    config = RuntimeConfig(
+        source="browser-webcam",
+        combined_threshold=sensitivity["threshold"],
+        model_threshold_scale=sensitivity["model_threshold_scale"],
+        min_anomaly_frames=sensitivity["min_anomaly_frames"],
+        normal_reset_frames=sensitivity["normal_reset_frames"],
+        use_human_tracking=form_data.get("human_tracking") == "on",
+        save_video=False,
+        show_window=False,
+        output_dir=output_dir,
+    )
+    anomaly_dir, html_report_dir, json_report_dir, video_dir, log_path, evidence_log_path = ensure_outputs(config)
+    metadata_path = write_metadata(config)
+    report_path = html_report_dir / f"live_report_{timestamp()}.html"
+    write_html_report(report_path, html_report_dir, [])
+
+    LIVE_SESSIONS[session_id] = {
+        "id": session_id,
+        "created_at": now_iso(),
+        "status": "running",
+        "config": config,
+        "detector": HybridAnomalyDetector(config),
+        "anomaly_dir": anomaly_dir,
+        "html_report_dir": html_report_dir,
+        "json_report_dir": json_report_dir,
+        "log_path": log_path,
+        "evidence_log_path": evidence_log_path,
+        "metadata_path": metadata_path,
+        "report_path": report_path,
+        "records": [],
+        "frames": 0,
+        "anomalies": 0,
+        "saved": 0,
+        "last_result": None,
+    }
+    return session_id
+
+
+def decode_data_url_image(data_url: str):
+    if "," in data_url:
+        data_url = data_url.split(",", 1)[1]
+    image_bytes = base64.b64decode(data_url)
+    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("Frame webcam tidak bisa dibaca.")
+    return frame
+
+
+def live_report_url(session: dict):
+    relative = session["report_path"].relative_to(session["config"].output_dir)
+    return url_for("live_output_file", session_id=session["id"], filename=str(relative))
+
+
 @app.route("/")
 def index():
     ensure_web_dirs()
     return render_template("index.html", jobs=list_jobs())
+
+
+@app.post("/live")
+def start_live_webcam():
+    session_id = create_live_session(request.form)
+    delay = request.form.get("frame_delay_ms", "700")
+    return redirect(url_for("live_detail", session_id=session_id, delay=delay))
+
+
+@app.route("/live/<session_id>")
+def live_detail(session_id: str):
+    session = LIVE_SESSIONS.get(session_id)
+    if session is None:
+        abort(404)
+    return render_template("live.html", session=session, report_url=live_report_url(session))
+
+
+@app.post("/api/live/<session_id>/frame")
+def live_frame(session_id: str):
+    session = LIVE_SESSIONS.get(session_id)
+    if session is None:
+        abort(404)
+    if session["status"] != "running":
+        return jsonify({"status": session["status"], "message": "Session sudah berhenti."}), 409
+
+    payload = request.get_json(force=True)
+    frame = decode_data_url_image(payload.get("image", ""))
+    config = session["config"]
+    detector = session["detector"]
+    frame = resize_frame(frame, config)
+    metrics = detector.score(frame)
+    annotated = draw_overlay(frame, metrics, fps=0.0)
+
+    session["frames"] += 1
+    saved_image_url = None
+    if metrics["is_anomaly"]:
+        session["anomalies"] += 1
+        image_path = session["anomaly_dir"] / f"live_anomaly_frame_{metrics['frame_index']:06d}_{timestamp()}.jpg"
+        cv2.imwrite(str(image_path), annotated)
+        append_log(session["log_path"], metrics, image_path)
+        evidence_record = build_evidence_record(config, detector, metrics, image_path)
+        append_evidence_log(session["evidence_log_path"], evidence_record)
+        write_explanation_json(session["json_report_dir"], evidence_record)
+        session["records"].append(evidence_record)
+        write_html_report(session["report_path"], session["html_report_dir"], session["records"])
+        session["saved"] += 1
+        saved_image_url = url_for(
+            "live_output_file",
+            session_id=session_id,
+            filename=str(image_path.relative_to(config.output_dir)),
+        )
+
+    result = {
+        "status": "ok",
+        "label": "ANOMALY" if metrics["is_anomaly"] else "NORMAL",
+        "frame_index": metrics["frame_index"],
+        "combined_score": round(metrics["combined_score"], 6),
+        "threshold": config.combined_threshold,
+        "motion_area_ratio": round(metrics["motion_area_ratio"], 6),
+        "flow_mean": round(metrics["flow_mean"], 6),
+        "streak": metrics["raw_anomaly_streak"],
+        "reason": metrics.get("reason", "normal"),
+        "frames": session["frames"],
+        "anomalies": session["anomalies"],
+        "saved": session["saved"],
+        "report_url": live_report_url(session),
+        "saved_image_url": saved_image_url,
+    }
+    session["last_result"] = result
+    return jsonify(result)
+
+
+@app.post("/api/live/<session_id>/stop")
+def stop_live(session_id: str):
+    session = LIVE_SESSIONS.get(session_id)
+    if session is None:
+        abort(404)
+    session["status"] = "stopped"
+    return jsonify({"status": "stopped", "report_url": live_report_url(session)})
 
 
 @app.post("/upload")
@@ -219,6 +390,14 @@ def job_output_file(job_id: str, filename: str):
     job = read_job(job_id)
     output_dir = Path(job["output_dir"])
     return send_from_directory(output_dir, filename)
+
+
+@app.route("/live_outputs/<session_id>/<path:filename>")
+def live_output_file(session_id: str, filename: str):
+    session = LIVE_SESSIONS.get(session_id)
+    if session is None:
+        abort(404)
+    return send_from_directory(session["config"].output_dir, filename)
 
 
 if __name__ == "__main__":
