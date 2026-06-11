@@ -90,6 +90,15 @@ EVIDENCE_LOG_COLUMNS = [
     "flow_threshold",
     "flow_vs_threshold",
     "flow_score",
+    "frame_diff_mean",
+    "motion_baseline",
+    "flow_baseline",
+    "motion_delta",
+    "flow_delta",
+    "sudden_motion_score",
+    "flow_spike_score",
+    "scene_change_score",
+    "abrupt_score",
     "reconstruction_error",
     "model_threshold",
     "autoencoder_score",
@@ -113,6 +122,8 @@ class RuntimeConfig:
     combined_threshold: float = 0.78
     motion_area_threshold: float = 0.045
     flow_threshold: float = 2.8
+    sudden_motion_threshold: float = 0.035
+    scene_change_threshold: float = 0.055
     model_threshold_scale: float = 1.0
     min_anomaly_frames: int = 8
     normal_reset_frames: int = 5
@@ -348,6 +359,9 @@ class HybridAnomalyDetector:
         self.raw_anomaly_streak = 0
         self.normal_streak = 0
         self.active_anomaly = False
+        self.motion_ewma = None
+        self.flow_ewma = None
+        self.frame_diff_ewma = None
         self.zone_polygon = load_zone_polygon(config)
         self.human_tracker = HumanTracker(config) if config.use_human_tracking else None
 
@@ -422,7 +436,9 @@ class HybridAnomalyDetector:
         motion_score = min(motion_area_ratio / self.config.motion_area_threshold, 2.0)
 
         flow_mean = 0.0
+        frame_diff_mean = 0.0
         if self.prev_gray is not None:
+            frame_diff_mean = float(np.mean(cv2.absdiff(self.prev_gray, gray)) / 255.0)
             flow = cv2.calcOpticalFlowFarneback(
                 self.prev_gray,
                 gray,
@@ -440,6 +456,17 @@ class HybridAnomalyDetector:
         self.prev_gray = gray
         flow_score = min(flow_mean / self.config.flow_threshold, 2.0)
 
+        motion_baseline = motion_area_ratio if self.motion_ewma is None else self.motion_ewma
+        flow_baseline = flow_mean if self.flow_ewma is None else self.flow_ewma
+        diff_baseline = frame_diff_mean if self.frame_diff_ewma is None else self.frame_diff_ewma
+        motion_delta = max(0.0, motion_area_ratio - motion_baseline)
+        flow_delta = max(0.0, flow_mean - flow_baseline)
+        frame_diff_delta = max(0.0, frame_diff_mean - diff_baseline)
+        sudden_motion_score = min(motion_delta / max(self.config.sudden_motion_threshold, 1e-8), 2.0)
+        flow_spike_score = min(flow_delta / max(self.config.flow_threshold * 0.35, 1e-8), 2.0)
+        scene_change_score = min(frame_diff_delta / max(self.config.scene_change_threshold, 1e-8), 2.0)
+        abrupt_score = min(0.45 * sudden_motion_score + 0.35 * flow_spike_score + 0.20 * scene_change_score, 2.0)
+
         reconstruction_error, ae_score = self._autoencoder_score(frame)
         tracks = self.human_tracker.update(frame, self.frame_count, self.zone_polygon) if self.human_tracker else []
         zone_tracks = [track for track in tracks if track.get("zone_frames", 0) >= self.config.zone_loiter_frames]
@@ -450,18 +477,45 @@ class HybridAnomalyDetector:
             combined_score = 0.0
             raw_is_anomaly = False
         elif self.model is not None:
-            combined_score = 0.50 * ae_score + 0.25 * motion_score + 0.10 * flow_score + 0.15 * human_tracking_score
+            combined_score = (
+                0.45 * ae_score
+                + 0.22 * motion_score
+                + 0.10 * flow_score
+                + 0.13 * abrupt_score
+                + 0.10 * human_tracking_score
+            )
             raw_is_anomaly = combined_score >= self.config.combined_threshold
         else:
-            combined_score = 0.55 * motion_score + 0.25 * flow_score + 0.20 * human_tracking_score
+            combined_score = (
+                0.46 * motion_score
+                + 0.20 * flow_score
+                + 0.22 * abrupt_score
+                + 0.12 * human_tracking_score
+            )
             raw_is_anomaly = combined_score >= self.config.combined_threshold
 
         if zone_tracks:
             raw_is_anomaly = True
             ids = ",".join(str(track["id"]) for track in zone_tracks[:5])
             reasons.append(f"person stayed in alert zone: track_id={ids}")
+        if raw_is_anomaly and abrupt_score >= 0.75:
+            reasons.append("sudden movement spike compared with recent normal baseline")
+        if raw_is_anomaly and scene_change_score >= 0.75:
+            reasons.append("rapid scene change detected")
+        if raw_is_anomaly and flow_spike_score >= 0.75:
+            reasons.append("optical-flow spike indicates abrupt motion")
         if raw_is_anomaly and not reasons:
             reasons.append("persistent abnormal visual/motion pattern")
+
+        ewma_alpha = 0.04 if raw_is_anomaly else 0.08
+        if self.motion_ewma is None:
+            self.motion_ewma = motion_area_ratio
+            self.flow_ewma = flow_mean
+            self.frame_diff_ewma = frame_diff_mean
+        else:
+            self.motion_ewma = (1 - ewma_alpha) * self.motion_ewma + ewma_alpha * motion_area_ratio
+            self.flow_ewma = (1 - ewma_alpha) * self.flow_ewma + ewma_alpha * flow_mean
+            self.frame_diff_ewma = (1 - ewma_alpha) * self.frame_diff_ewma + ewma_alpha * frame_diff_mean
 
         if raw_is_anomaly:
             self.raw_anomaly_streak += 1
@@ -495,6 +549,17 @@ class HybridAnomalyDetector:
             "motion_score": float(motion_score),
             "flow_mean": flow_mean,
             "flow_score": float(flow_score),
+            "frame_diff_mean": frame_diff_mean,
+            "motion_baseline": float(motion_baseline),
+            "flow_baseline": float(flow_baseline),
+            "frame_diff_baseline": float(diff_baseline),
+            "motion_delta": float(motion_delta),
+            "flow_delta": float(flow_delta),
+            "frame_diff_delta": float(frame_diff_delta),
+            "sudden_motion_score": float(sudden_motion_score),
+            "flow_spike_score": float(flow_spike_score),
+            "scene_change_score": float(scene_change_score),
+            "abrupt_score": float(abrupt_score),
             "reconstruction_error": reconstruction_error,
             "autoencoder_score": float(ae_score),
             "boxes": boxes,
@@ -557,7 +622,7 @@ def draw_overlay(frame, metrics, fps):
     cv2.putText(output, label, (18, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2, cv2.LINE_AA)
     cv2.putText(
         output,
-        f"score={metrics['combined_score']:.2f} streak={metrics['raw_anomaly_streak']} motion={metrics['motion_area_ratio']:.3f} flow={metrics['flow_mean']:.2f} fps={fps:.1f}",
+        f"score={metrics['combined_score']:.2f} streak={metrics['raw_anomaly_streak']} motion={metrics['motion_area_ratio']:.3f} flow={metrics['flow_mean']:.2f} abrupt={metrics.get('abrupt_score', 0):.2f} fps={fps:.1f}",
         (18, 65),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.52,
@@ -605,15 +670,17 @@ def draw_overlay(frame, metrics, fps):
 def select_evidence_log_path(output_dir: Path):
     base_path = output_dir / "anomaly_evidence_log.csv"
     enhanced_path = output_dir / "anomaly_evidence_log_enhanced.csv"
-    if not base_path.exists():
-        return base_path
+    abrupt_path = output_dir / "anomaly_evidence_log_abrupt.csv"
 
-    with base_path.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        header = next(reader, [])
-    if header == EVIDENCE_LOG_COLUMNS:
-        return base_path
-    return enhanced_path
+    for path in (base_path, enhanced_path):
+        if not path.exists():
+            return path
+        with path.open("r", newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader, [])
+        if header == EVIDENCE_LOG_COLUMNS:
+            return path
+    return abrupt_path
 
 
 def ensure_outputs(config: RuntimeConfig):
@@ -734,12 +801,17 @@ def motion_box_summary(metrics: dict[str, Any], config: RuntimeConfig):
 def infer_possible_event(metrics: dict[str, Any], config: RuntimeConfig):
     motion_ratio = metrics["motion_area_ratio"] / max(config.motion_area_threshold, 1e-8)
     flow_ratio = metrics["flow_mean"] / max(config.flow_threshold, 1e-8)
+    abrupt_score = metrics.get("abrupt_score", 0.0)
+    sudden_motion_score = metrics.get("sudden_motion_score", 0.0)
+    flow_spike_score = metrics.get("flow_spike_score", 0.0)
     has_zone_track = bool(metrics.get("zone_tracks"))
     has_tracks = bool(metrics.get("tracks"))
     box_count = len(metrics.get("boxes", []))
 
     if has_zone_track:
         return "restricted-area activity or loitering"
+    if abrupt_score >= 1.0 and (sudden_motion_score >= 0.75 or flow_spike_score >= 0.75):
+        return "sudden movement anomaly"
     if motion_ratio >= 2.5 and flow_ratio >= 1.0:
         return "sudden aggressive movement or possible violence/vandalism"
     if motion_ratio >= 2.0 and box_count >= 2:
@@ -756,6 +828,7 @@ def build_natural_explanation(config: RuntimeConfig, metrics: dict[str, Any], re
     flow_multiplier = safe_float(record["flow_vs_threshold"])
     score_multiplier = safe_float(record["score_vs_threshold"])
     duration = safe_float(record["anomaly_duration_seconds"])
+    abrupt = safe_float(record.get("abrupt_score", 0.0))
     score_status = (
         f"skor gabungan melewati ambang deteksi sebesar {score_multiplier:.2f}x"
         if score_multiplier >= 1.0
@@ -764,6 +837,7 @@ def build_natural_explanation(config: RuntimeConfig, metrics: dict[str, Any], re
     return (
         f"Frame ini dikategorikan sebagai ANOMALY karena {score_status}. Area gerakan terukur {motion_multiplier:.2f}x dari "
         f"ambang motion dan optical flow berada pada {flow_multiplier:.2f}x dari ambang flow. "
+        f"Nilai abrupt movement adalah {abrupt:.2f}, yang mengukur lonjakan gerakan terhadap baseline frame sebelumnya. "
         f"Indikasi ini bertahan selama sekitar {duration:.2f} detik atau "
         f"{record['anomaly_duration_frames']} frame, sehingga bukan hanya noise sesaat. "
         f"Region gerakan dominan berada di {record['dominant_motion_region']}, dengan dugaan kejadian: "
@@ -778,6 +852,8 @@ def build_evidence_summary(config: RuntimeConfig, metrics: dict[str, Any], detec
         f"streak {metrics['raw_anomaly_streak']}/{config.min_anomaly_frames} frame",
         f"motion_area_ratio {metrics['motion_area_ratio']:.4f} vs threshold {config.motion_area_threshold:.4f}",
         f"flow_mean {metrics['flow_mean']:.3f} vs threshold {config.flow_threshold:.3f}",
+        f"abrupt_score {metrics.get('abrupt_score', 0.0):.3f}",
+        f"sudden_motion_score {metrics.get('sudden_motion_score', 0.0):.3f}",
     ]
     if metrics["reconstruction_error"] is None:
         evidence.append("autoencoder tidak dipakai/model tidak tersedia")
@@ -836,6 +912,15 @@ def build_evidence_record(config: RuntimeConfig, detector: HybridAnomalyDetector
         "flow_threshold": f"{config.flow_threshold:.6f}",
         "flow_vs_threshold": f"{flow_vs_threshold:.3f}",
         "flow_score": f"{metrics['flow_score']:.6f}",
+        "frame_diff_mean": f"{metrics.get('frame_diff_mean', 0.0):.6f}",
+        "motion_baseline": f"{metrics.get('motion_baseline', 0.0):.6f}",
+        "flow_baseline": f"{metrics.get('flow_baseline', 0.0):.6f}",
+        "motion_delta": f"{metrics.get('motion_delta', 0.0):.6f}",
+        "flow_delta": f"{metrics.get('flow_delta', 0.0):.6f}",
+        "sudden_motion_score": f"{metrics.get('sudden_motion_score', 0.0):.6f}",
+        "flow_spike_score": f"{metrics.get('flow_spike_score', 0.0):.6f}",
+        "scene_change_score": f"{metrics.get('scene_change_score', 0.0):.6f}",
+        "abrupt_score": f"{metrics.get('abrupt_score', 0.0):.6f}",
         "reconstruction_error": "" if metrics["reconstruction_error"] is None else f"{metrics['reconstruction_error']:.8f}",
         "model_threshold": "" if detector.model_threshold is None else f"{detector.model_threshold:.8f}",
         "autoencoder_score": f"{metrics['autoencoder_score']:.6f}",
@@ -884,6 +969,15 @@ def append_evidence_log(evidence_log_path: Path, record: dict[str, Any]):
                 record["flow_threshold"],
                 record["flow_vs_threshold"],
                 record["flow_score"],
+                record["frame_diff_mean"],
+                record["motion_baseline"],
+                record["flow_baseline"],
+                record["motion_delta"],
+                record["flow_delta"],
+                record["sudden_motion_score"],
+                record["flow_spike_score"],
+                record["scene_change_score"],
+                record["abrupt_score"],
                 record["reconstruction_error"],
                 record["model_threshold"],
                 record["autoencoder_score"],
@@ -918,6 +1012,10 @@ def write_html_report(report_path: Path, report_dir: Path, records: list[dict[st
             ("Score ratio", f"{record['score_vs_threshold']}x threshold"),
             ("Motion", f"area {record['motion_area_ratio']}, score {record['motion_score']}, {record['motion_vs_threshold']}x threshold"),
             ("Optical flow", f"mean {record['flow_mean']}, score {record['flow_score']}, {record['flow_vs_threshold']}x threshold"),
+            ("Sudden motion", f"score {record['sudden_motion_score']}, delta {record['motion_delta']}, baseline {record['motion_baseline']}"),
+            ("Flow spike", f"score {record['flow_spike_score']}, delta {record['flow_delta']}, baseline {record['flow_baseline']}"),
+            ("Scene change", f"score {record['scene_change_score']}, frame diff {record['frame_diff_mean']}"),
+            ("Abrupt score", record["abrupt_score"]),
             ("Autoencoder", record["reconstruction_error"] or "model tidak tersedia"),
             ("Human/zone", f"human_count={record['human_count']}, zone_track_ids={record['zone_track_ids'] or '-'}"),
             ("Motion boxes", str(record["detected_motion_boxes"])),

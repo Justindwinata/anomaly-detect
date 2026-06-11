@@ -19,6 +19,7 @@ WORKSPACE = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = WORKSPACE / "hybrid_outputs"
 DEFAULT_CSV_PATH = DEFAULT_OUTPUT_DIR / "anomaly_evidence_log.csv"
 DEFAULT_ENHANCED_CSV_PATH = DEFAULT_OUTPUT_DIR / "anomaly_evidence_log_enhanced.csv"
+DEFAULT_ABRUPT_CSV_PATH = DEFAULT_OUTPUT_DIR / "anomaly_evidence_log_abrupt.csv"
 DEFAULT_REPORT_DIR = DEFAULT_OUTPUT_DIR / "anomaly_reports" / "html"
 
 
@@ -30,6 +31,8 @@ def read_records(csv_path: Path):
 
 
 def default_csv_path():
+    if DEFAULT_ABRUPT_CSV_PATH.exists():
+        return DEFAULT_ABRUPT_CSV_PATH
     if DEFAULT_ENHANCED_CSV_PATH.exists():
         return DEFAULT_ENHANCED_CSV_PATH
     return DEFAULT_CSV_PATH
@@ -56,6 +59,10 @@ def write_report(records: list[dict[str, str]], report_path: Path):
             ("Score ratio", f"{row_value(record, 'score_vs_threshold')}x threshold"),
             ("Motion", f"area {row_value(record, 'motion_area_ratio')}, score {row_value(record, 'motion_score')}, {row_value(record, 'motion_vs_threshold')}x threshold"),
             ("Optical flow", f"mean {row_value(record, 'flow_mean')}, score {row_value(record, 'flow_score')}, {row_value(record, 'flow_vs_threshold')}x threshold"),
+            ("Sudden motion", f"score {row_value(record, 'sudden_motion_score')}, delta {row_value(record, 'motion_delta')}, baseline {row_value(record, 'motion_baseline')}"),
+            ("Flow spike", f"score {row_value(record, 'flow_spike_score')}, delta {row_value(record, 'flow_delta')}, baseline {row_value(record, 'flow_baseline')}"),
+            ("Scene change", f"score {row_value(record, 'scene_change_score')}, frame diff {row_value(record, 'frame_diff_mean')}"),
+            ("Abrupt score", row_value(record, "abrupt_score")),
             ("Autoencoder", row_value(record, "reconstruction_error", "model tidak tersedia")),
             ("Human/zone", f"human_count={row_value(record, 'human_count')}, zone_track_ids={row_value(record, 'zone_track_ids')}"),
             ("Motion boxes", row_value(record, "detected_motion_boxes")),

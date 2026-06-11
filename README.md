@@ -2,6 +2,8 @@
 
 Program deteksi anomali CCTV untuk tugas Computer Vision. Output utama adalah label `NORMAL` atau `ANOMALY`, dengan contoh kejadian anomali seperti pencurian, vandalism, abusive/violence, aktivitas mencurigakan, dan objek tidak wajar.
 
+Detector memakai kombinasi motion area, optical flow, sudden motion spike, scene change, optional autoencoder, dan optional human/zone tracking untuk membedakan aktivitas normal dengan anomali.
+
 ## Isi Utama
 
 - `hybrid_realtime_anomaly_app.py` - aplikasi utama untuk webcam, video CCTV, atau RTSP.

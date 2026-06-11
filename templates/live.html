@@ -38,6 +38,8 @@
         <dd id="motionValue">-</dd>
         <dt>Flow</dt>
         <dd id="flowValue">-</dd>
+        <dt>Abrupt</dt>
+        <dd id="abruptValue">-</dd>
         <dt>Streak</dt>
         <dd id="streakValue">-</dd>
         <dt>Saved</dt>
@@ -106,6 +108,7 @@
         updateMetric("scoreValue", `${result.combined_score} / ${result.threshold}`);
         updateMetric("motionValue", result.motion_area_ratio);
         updateMetric("flowValue", result.flow_mean);
+        updateMetric("abruptValue", result.abrupt_score);
         updateMetric("streakValue", result.streak);
         updateMetric("savedValue", result.saved);
         updateMetric("reasonValue", result.reason || "-");
