@@ -186,7 +186,11 @@ def is_forbidden(path: Path) -> tuple[bool, str]:
 
 
 def git_tracked_files(root: Path) -> set[Path]:
-    output = run_git(["ls-files"], root)
+    # Use HEAD instead of the mutable index so unrelated staged files are not
+    # accidentally archived. If HEAD is unavailable, fall back to the index.
+    output = run_git(["ls-tree", "-r", "--name-only", "HEAD"], root)
+    if not output:
+        output = run_git(["ls-files"], root)
     if not output:
         return set()
     return {Path(line) for line in output.splitlines() if line.strip()}
