@@ -16,6 +16,8 @@ env/
 outputs/
 hybrid_outputs/
 web_outputs/
+dist/*.zip
+dist/.zip_staging/
 
 # Local datasets, CCTV footage, and generated media
 data/

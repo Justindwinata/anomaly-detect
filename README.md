@@ -94,3 +94,16 @@ models/trained_model.pth
 ```
 
 Jika model tidak tersedia, program tetap berjalan dengan mode motion dan optical flow.
+
+## Project ZIP Archive
+
+Untuk membuat arsip ZIP source-only yang bersih:
+
+```bash
+python3 scripts/build_project_zip.py
+python3 scripts/verify_project_zip.py
+```
+
+ZIP akan dibuat secara lokal di `dist/CCTV_ANOMALY_DETECT_Project_Source.zip`.
+File ZIP tidak perlu dicommit karena hanya artefak lokal untuk backup,
+pengumpulan, atau berbagi source program.
